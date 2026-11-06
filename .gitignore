@@ -1,0 +1,5 @@
+dist/
+.test-profile/
+.test-output/
+node_modules/
+debug.log

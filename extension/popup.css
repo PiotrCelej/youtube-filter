@@ -1,0 +1,36 @@
+:root { color-scheme: light dark; font: 14px/1.5 system-ui, sans-serif; color: #1f3028; background: #fafbf9; }
+* { box-sizing: border-box; }
+body { width: 350px; margin: 0; padding: 24px; }
+header { display: flex; align-items: center; gap: 12px; margin-bottom: 26px; }
+h1 { margin: 0; font-size: 18px; line-height: 1.3; letter-spacing: -.4px; }
+header p { margin: 3px 0 0; font-size: 12px; color: #68756b; }
+.toggle-row { position: relative; display: flex; align-items: center; gap: 16px; cursor: pointer; }
+.toggle-row > span:first-child { flex: 1; }
+strong, small { display: block; }
+small { color: #68756b; font-size: 12px; margin-top: 3px; }
+input { position: absolute; right: 0; width: 44px; height: 26px; margin: 0; opacity: 0; cursor: pointer; }
+.switch { width: 44px; height: 26px; padding: 3px; border-radius: 20px; background: #b5beb7; pointer-events: none; transition: background .15s; }
+.switch::after { content: ""; display: block; width: 20px; height: 20px; border-radius: 50%; background: white; box-shadow: 0 1px 3px #0002; transition: transform .15s; }
+input:checked + .switch { background: #245c43; }
+input:checked + .switch::after { transform: translateX(18px); }
+input:focus-visible + .switch { outline: 3px solid #7caa91; outline-offset: 3px; }
+input:disabled + .switch { opacity: .5; }
+.explanation { color: #59685e; margin: 22px 0 16px; font-size: 13px; }
+#status { padding: 12px; background: #eef3ee; border-radius: 9px; font-size: 12px; overflow-wrap: anywhere; }
+#status[data-error] { background: #fff0de; color: #76450f; }
+button, a { font: inherit; }
+button { display: block; width: 100%; border: 1px solid #c9d4cb; border-radius: 8px; background: transparent; color: inherit; padding: 10px; margin-top: 16px; cursor: pointer; }
+button:hover:enabled { background: #eef3ee; }
+button:disabled { cursor: default; opacity: .5; }
+a { display: flex; justify-content: space-between; color: #245c43; text-decoration: none; margin-top: 14px; }
+a:hover { text-decoration: underline; }
+footer { border-top: 1px solid #dce3dc; padding-top: 16px; margin-top: 22px; color: #68756b; font-size: 11px; }
+@media (prefers-color-scheme: dark) {
+  :root { color: #e4ede7; background: #17211c; }
+  header p, small, .explanation, footer { color: #a1b3a5; }
+  #status, button:hover:enabled { background: #25382c; }
+  #status[data-error] { background: #3d2e1c; color: #f0cd9f; }
+  button, footer { border-color: #3c4d40; }
+  a { color: #a6d6b6; }
+}
+@media (prefers-reduced-motion: reduce) { .switch, .switch::after { transition: none; } }

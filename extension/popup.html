@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YouTube — tylko subskrypcje</title>
+  <link rel="stylesheet" href="popup.css">
+  <script src="popup.js" defer></script>
+</head>
+<body>
+  <header>
+    <svg width="36" height="36" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+      <rect width="36" height="36" rx="10" fill="#245C43"/>
+      <path d="M9 11h18l-7 8v6l-4 2v-8z" fill="#E6F3EA"/>
+    </svg>
+    <div><h1>Tylko subskrypcje</h1><p>Twoja główna na YouTube</p></div>
+  </header>
+  <main>
+    <label class="toggle-row" for="enabled">
+      <span><strong>Filtr rekomendacji</strong><small id="toggle-description">Odczytywanie ustawień…</small></span>
+      <input id="enabled" type="checkbox" role="switch" aria-describedby="toggle-description" disabled>
+      <span class="switch" aria-hidden="true"></span>
+    </label>
+    <p class="explanation">Na głównej zostają rekomendacje z Twoich kanałów. Poniżej pojawiają się ich filmy z ostatniego miesiąca, a dla kanałów bez nowych publikacji — jeden najnowszy film.</p>
+    <div id="status" role="status" aria-live="polite">Sprawdzanie karty…</div>
+    <button id="refresh" type="button" disabled>Odśwież listę kanałów</button>
+    <a id="open-home" href="https://www.youtube.com/" target="_blank" rel="noopener">Otwórz YouTube <span aria-hidden="true">↗</span></a>
+  </main>
+  <footer>Wymaga zalogowania na YouTube. Ustawienie jest wspólne dla kart tej przeglądarki.</footer>
+</body>
+</html>

@@ -1,0 +1,105 @@
+/* Hide unverified recommendations before paint, including newly inserted cards. */
+html[data-ytsf-active] ytd-browse:is([page-subtype="home"], [data-ytsf-home]) ytd-rich-item-renderer:not([data-ytsf-allowed]),
+html[data-ytsf-active] ytd-browse:is([page-subtype="home"], [data-ytsf-home]) ytd-rich-section-renderer,
+html[data-ytsf-active] ytd-browse:is([page-subtype="home"], [data-ytsf-home]) ytd-video-renderer:not([data-ytsf-allowed]),
+html[data-ytsf-active] ytd-browse:is([page-subtype="home"], [data-ytsf-home]) ytd-grid-video-renderer:not([data-ytsf-allowed]),
+html[data-ytsf-active] ytd-browse:is([page-subtype="home"], [data-ytsf-home]) yt-lockup-view-model:not([data-ytsf-allowed]),
+[data-ytsf-hidden] {
+  display: none !important;
+}
+
+/* Pack the original cards across YouTube's row boundaries, keeping thumbnails,
+   links and click handlers intact. Removing the attribute restores native layout. */
+html[data-ytsf-active] [data-ytsf-grid] {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: 32px 16px;
+  align-items: start;
+  padding-inline: 24px;
+}
+html[data-ytsf-active] [data-ytsf-grid] > ytd-rich-grid-row,
+html[data-ytsf-active] [data-ytsf-grid] > ytd-rich-grid-row > #contents {
+  display: contents !important;
+}
+html[data-ytsf-active] [data-ytsf-grid] > [data-ytsf-allowed],
+html[data-ytsf-active] [data-ytsf-grid] > ytd-rich-grid-row > #contents > [data-ytsf-allowed] {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  margin: 0 !important;
+}
+/* Unknown recommendation formats stay hidden until their author is verified. */
+html[data-ytsf-active] [data-ytsf-grid] > :not(ytd-rich-grid-row):not(ytd-continuation-item-renderer):not([data-ytsf-allowed]),
+html[data-ytsf-active] [data-ytsf-grid] > ytd-rich-grid-row > #contents > :not(ytd-continuation-item-renderer):not([data-ytsf-allowed]) {
+  display: none !important;
+}
+html[data-ytsf-active] [data-ytsf-grid] ytd-continuation-item-renderer {
+  grid-column: 1 / -1;
+}
+
+#ytsf-status {
+  box-sizing: border-box;
+  margin: 16px 24px;
+  padding: 14px 18px;
+  border: 1px solid #b7c9c1;
+  border-radius: 12px;
+  background: #eef7f2;
+  color: #173e2d;
+  font: 14px/1.5 system-ui, sans-serif;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+#ytsf-status[hidden] { display: none; }
+#ytsf-status span { flex: 1; min-width: 160px; }
+#ytsf-status button, #ytsf-status a {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid #9bb8aa;
+  border-radius: 7px;
+  padding: 6px 10px;
+  cursor: pointer;
+  text-decoration: none;
+}
+html[dark] #ytsf-status {
+  background: #16291f;
+  color: #d8efe2;
+  border-color: #385343;
+}
+
+#ytsf-uploads {
+  display: block;
+  box-sizing: border-box;
+  margin: 32px 24px;
+  padding-top: 24px;
+  border-top: 1px solid #c5d3c9;
+  color: #173e2d;
+  font: 14px/1.5 system-ui, sans-serif;
+}
+#ytsf-uploads[hidden], #ytsf-uploads [hidden] { display: none !important; }
+#ytsf-uploads h2 { font-size: 22px; line-height: 1.3; margin: 0 0 8px; }
+#ytsf-uploads p { margin: 8px 0; }
+#ytsf-uploads button {
+  font: inherit;
+  color: inherit;
+  border: 1px solid #9bb8aa;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: transparent;
+  cursor: pointer;
+  margin: 6px 0 20px;
+}
+#ytsf-uploads button:disabled { opacity: .55; cursor: default; }
+#ytsf-uploads .ytsf-uploads-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 28px 16px; }
+#ytsf-uploads article { min-width: 0; }
+#ytsf-uploads a { text-decoration: none; color: inherit; }
+#ytsf-uploads a:hover h3 { text-decoration: underline; }
+#ytsf-uploads img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: cover; background: #dfe9e2; border-radius: 12px; }
+#ytsf-uploads h3 { font-size: 16px; line-height: 1.4; margin: 9px 0 5px; overflow-wrap: anywhere; }
+#ytsf-uploads .ytsf-upload-channel, #ytsf-uploads time, #ytsf-uploads .ytsf-upload-fallback { display: block; font-size: 12px; }
+#ytsf-uploads .ytsf-upload-fallback { margin-top: 6px; font-weight: 600; }
+#ytsf-uploads details { margin-bottom: 16px; }
+html[dark] #ytsf-uploads { color: #d8efe2; border-color: #385343; }
+html[dark] #ytsf-uploads img { background: #243b2d; }
