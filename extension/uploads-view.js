@@ -26,6 +26,7 @@
     failures.append(summary, errorList);
     element.append(heading, description, progress, refresh, failures, grid);
     let renderedVersion = -1;
+    const cards = new Map();
     const formatter = new Intl.DateTimeFormat("pl-PL", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 
     function render(state, browse) {
@@ -37,7 +38,7 @@
       renderedVersion = state.version;
       refresh.disabled = state.phase === "loading";
       progress.textContent = state.phase === "loading"
-        ? `Pobieranie filmów · odczytano ${state.completed} z ${state.total} kanałów · znalezione filmy: ${state.videos.length}`
+        ? `${state.cached ? "Odświeżanie w tle" : "Pobieranie filmów"} · odczytano ${state.completed} z ${state.total} kanałów · znalezione filmy: ${state.videos.length}`
         : `Filmy: ${state.videos.length} · sprawdzone kanały: ${state.completed} z ${state.total}${state.errors.length ? " · lista jest niepełna, użyj przycisku Odśwież filmy" : ""}`;
       if (state.phase === "ready" && !state.videos.length && !state.errors.length) progress.textContent += " · Brak dostępnych opublikowanych filmów.";
       failures.hidden = !state.errors.length;
@@ -48,7 +49,14 @@
         return item;
       }));
       const videos = [...state.videos].sort((a, b) => Date.parse(b.published) - Date.parse(a.published) || a.id.localeCompare(b.id));
-      grid.replaceChildren(...videos.map(video => {
+      const active = new Set();
+      const ordered = videos.map(video => {
+        const key = `${video.channelId}:${video.id}`;
+        active.add(key);
+        const signature = JSON.stringify([video.id, video.channelId, video.title,
+          video.channelName, video.published, Boolean(video.fallback)]);
+        const previous = cards.get(key);
+        if (previous?.signature === signature) return previous.element;
         const card = document.createElement("article");
         card.dataset.videoId = video.id;
         card.dataset.channelId = video.channelId;
@@ -79,14 +87,21 @@
           badge.textContent = "Najnowszy film kanału · starszy niż miesiąc";
           card.append(badge);
         }
+        cards.set(key, { signature, element: card });
         return card;
-      }));
+      });
+      for (let index = 0; index < ordered.length; index++) {
+        if (grid.children[index] !== ordered[index]) grid.insertBefore(ordered[index], grid.children[index] || null);
+      }
+      while (grid.children.length > ordered.length) grid.lastElementChild.remove();
+      for (const key of cards.keys()) if (!active.has(key)) cards.delete(key);
     }
 
     function clear() {
       element.hidden = true;
       grid.replaceChildren();
       errorList.replaceChildren();
+      cards.clear();
       renderedVersion = -1;
     }
     return { element, render, clear };

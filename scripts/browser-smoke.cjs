@@ -92,7 +92,7 @@ function card(id, author, extra = "") {
 const modernCard = card("modern", "/@second")
   .replaceAll("ytd-rich-item-renderer", "yt-lockup-view-model")
   .replaceAll("<ytd-channel-name>", '<div class="yt-content-metadata-view-model__metadata-row">').replaceAll("</ytd-channel-name>", "</div>");
-const home = `<!doctype html><html><head><meta charset="utf-8"><style>
+const home = `<!doctype html><html><head><meta charset="utf-8"><script>globalThis.ytcfg={set(){}};ytcfg.set({"LOGGED_IN":true,"DATASYNC_ID":"offline-account-A||"});</script><style>
 body { margin: 8px; font: 14px system-ui; } ytd-app, ytd-browse, ytd-rich-grid-renderer { display:block; }
 ytd-rich-grid-row > #contents { display:flex; min-height:180px; }
 ytd-rich-item-renderer, yt-lockup-view-model { display:block; width:300px; margin:12px; }
@@ -121,6 +121,7 @@ async function run() {
   const [port, browserPath] = fs.readFileSync(portFile, "utf8").trim().split(/\r?\n/);
   const browserCDP = new CDP(`ws://127.0.0.1:${port}${browserPath}`);
   let tab;
+  let worker;
   try {
     const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
     const target = targets.find(item => item.type === "page");
@@ -138,9 +139,11 @@ async function run() {
     let failUploadB = false;
     let delayUploads = false;
     let useModernPlaylists = false;
+    let testAccount = "offline-account-A||";
     const pendingUploads = [];
     const calls = [];
-    tab.on("Fetch.requestPaused", async event => {
+    async function intercept(client) {
+    client.on("Fetch.requestPaused", async event => {
       try {
         const url = new URL(event.request.url);
         calls.push(url.pathname);
@@ -171,15 +174,29 @@ async function run() {
           body = JSON.stringify({ onResponseReceivedActions: [{ appendContinuationItemsAction: { continuationItems: [channel(B, "second")] } }] });
         } else if (url.pathname === "/watch" && Object.values(channelUploads).flat().some(video => video.id === url.searchParams.get("v"))) {
           body = uploadFixtures.watch(Object.values(channelUploads).flat().find(video => video.id === url.searchParams.get("v")));
-        } else if (url.pathname === "/" || url.pathname === "/watch") body = home;
+        } else if (url.pathname === "/" || url.pathname === "/watch") body = home.replace("offline-account-A||", testAccount);
         else { responseCode = 404; body = ""; }
-        await tab.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode,
+        await client.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode,
           responseHeaders: [{ name: "Content-Type", value: contentType }], body: Buffer.from(body).toString("base64") });
       } catch (cause) {
         if (!/closed|Invalid InterceptionId|Fetch domain is not enabled/i.test(cause.message)) exceptions.push({ text: cause.message });
       }
     });
-    await tab.send("Fetch.enable", { patterns: [{ urlPattern: "https://*youtube.com/*" }, { urlPattern: "https://i.ytimg.com/*" }] });
+    await client.send("Fetch.enable", { patterns: [{ urlPattern: "https://*youtube.com/*" }, { urlPattern: "https://i.ytimg.com/*" }] });
+    }
+    await intercept(tab);
+    let workerTarget;
+    const workerDeadline = Date.now() + 10000;
+    while (!workerTarget && Date.now() < workerDeadline) {
+      const live = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+      workerTarget = live.find(item => item.type === "service_worker" && item.url.endsWith("/background.js"));
+      if (!workerTarget) await sleep(50);
+    }
+    assert.ok(workerTarget, "The startup service worker must load");
+    worker = new CDP(workerTarget.webSocketDebuggerUrl);
+    worker.on("Runtime.exceptionThrown", event => exceptions.push(event.exceptionDetails));
+    await worker.send("Runtime.enable");
+    await intercept(worker);
     await tab.send("Page.navigate", { url: "https://www.youtube.com/" });
     async function evaluate(expression, contextId) {
       const result = await tab.send("Runtime.evaluate", { expression, contextId, awaitPromise: true, returnByValue: true });
@@ -253,17 +270,17 @@ async function run() {
     failUploadB = true;
     await evaluate('document.querySelector("#ytsf-uploads button").click()');
     await waitFor('document.querySelector("#ytsf-uploads .ytsf-uploads-progress")?.textContent.includes("lista jest niepełna")');
-    assert.equal(await evaluate('document.querySelectorAll("#ytsf-uploads article").length'), 2);
+    assert.equal(await evaluate('document.querySelectorAll("#ytsf-uploads article").length'), 3);
     assert.equal((await visibility()).subscribed, true);
     assert.equal(await evaluate('document.querySelector("#ytsf-uploads details").hidden'), false);
     failUploadB = false;
     await evaluate('document.querySelector("#ytsf-uploads button").click()');
     await waitFor('document.querySelector("#ytsf-uploads .ytsf-uploads-progress")?.textContent.includes("Filmy: 3")');
-    report("PASS channel upload errors are visible, do not interrupt recommendations, and retry recovers");
+    report("PASS failed background channel refresh retains cached videos, reports errors, and retry recovers");
 
     delayUploads = true;
     await evaluate('document.querySelector("#ytsf-uploads button").click()');
-    await waitFor('document.querySelector("#ytsf-uploads .ytsf-uploads-progress")?.textContent.includes("Pobieranie filmów")');
+    await waitFor('document.querySelector("#ytsf-uploads .ytsf-uploads-progress")?.textContent.includes("Odświeżanie w tle")');
     await evaluate('chrome.storage.local.set({enabled:false})', isolated);
     await waitFor('document.getElementById("ytsf-uploads").hidden');
     delayUploads = false;
@@ -303,15 +320,16 @@ async function run() {
     failRequests = true;
     await evaluate(`document.querySelector('#ytsf-status button').click()`);
     await waitFor('document.getElementById("ytsf-status").textContent.includes("HTTP 503")');
-    assert.ok(Object.values(await visibility()).every(value => !value));
+    assert.equal((await visibility()).subscribed, true);
+    assert.equal(await evaluate('document.querySelectorAll("#ytsf-uploads article").length'), 3);
     failRequests = false;
     await evaluate(`document.querySelector('#ytsf-status button').click()`);
     await waitFor('document.getElementById("subscribed").hasAttribute("data-ytsf-allowed")');
-    report("PASS failed refresh hides unverified recommendations and retry recovers");
+    report("PASS failed subscription refresh keeps the account's cached view and retry recovers");
 
     delayRequests = true;
     await evaluate(`document.querySelector('#ytsf-status button').click()`);
-    await waitFor('document.getElementById("ytsf-status").textContent.includes("Pobieranie")');
+    await waitFor('document.getElementById("ytsf-status").textContent.includes("Aktualizacja kanałów w tle")');
     await evaluate('chrome.storage.local.set({enabled:false})', isolated);
     await waitFor('!document.documentElement.hasAttribute("data-ytsf-active")');
     delayedResolve?.();
@@ -349,11 +367,121 @@ async function run() {
     assert.ok(Object.values(await visibility()).every(Boolean));
     assert.equal(calls.filter(value => value === "/feed/channels").length, requestCount);
     report("PASS popup switch controls filtering and disabled state survives reload without fetching subscriptions");
+
+    async function isolatedContext() {
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        for (const context of contexts.values()) {
+          if (!context.auxData?.isDefault && await evaluate('Boolean(globalThis.chrome?.runtime?.id)', context.id)) return context.id;
+        }
+        await sleep(30);
+      }
+      throw new Error("No extension context after reload");
+    }
+    let currentIsolated = await isolatedContext();
+    await evaluate('chrome.storage.local.set({enabled:true})', currentIsolated);
+    await waitFor('document.querySelectorAll("#ytsf-uploads article").length === 3 && !document.querySelector("#ytsf-uploads button").disabled');
+    const dataRequests = () => calls.filter(value => ["/feed/channels", "/feeds/videos.xml", "/playlist", "/youtubei/v1/browse"].includes(value)).length;
+    const warmRequests = dataRequests();
+    const warmStart = Date.now();
+    await tab.send("Page.reload");
+    await waitFor('document.querySelectorAll("#ytsf-uploads article").length === 3 && !document.querySelector("#ytsf-uploads button").disabled');
+    const warmElapsed = Date.now() - warmStart;
+    assert.equal(dataRequests(), warmRequests, "A fresh cached revisit must not fetch channels or film lists");
+    report(`PASS warm revisit displays persisted films in ${warmElapsed} ms with zero data requests`);
+
+    currentIsolated = await isolatedContext();
+    await evaluate(`(async () => {
+      const entries = await chrome.storage.local.get(null);
+      const stale = Object.fromEntries(Object.entries(entries).filter(([key]) => key.startsWith('ytsf-cache-v1:')).map(([key, value]) => [key, {...value, checkedAt: Date.now()-3600000}]));
+      await chrome.storage.local.set(stale);
+    })()`, currentIsolated);
+    delayRequests = true;
+    delayUploads = true;
+    delayedResolve = undefined;
+    const staleStart = Date.now();
+    await tab.send("Page.reload");
+    await waitFor('document.querySelectorAll("#ytsf-uploads article").length === 3');
+    assert.equal(await evaluate('document.querySelector("#ytsf-uploads").hidden'), false);
+    assert.equal((await visibility()).subscribed, true);
+    report(`PASS stale cache displays films in ${Date.now()-staleStart} ms while all refresh responses are paused`);
+    const pendingDeadline = Date.now() + 10000;
+    while ((!delayedResolve || pendingUploads.length < 2) && Date.now() < pendingDeadline) await sleep(30);
+    assert.ok(delayedResolve && pendingUploads.length >= 2, "The stale cache must refresh in the background");
+    await evaluate('window.cachedThumbnail = document.querySelector("#ytsf-uploads img")');
+    delayRequests = false;
+    delayUploads = false;
+    delayedResolve();
+    for (const resolve of pendingUploads.splice(0)) resolve();
+    await waitFor('document.querySelectorAll("#ytsf-uploads article").length === 3 && !document.querySelector("#ytsf-uploads button").disabled');
+    assert.equal(await evaluate('window.cachedThumbnail === document.querySelector("#ytsf-uploads img")'), true);
+    report("PASS background refresh reuses existing thumbnail nodes without rebuilding the film grid");
+
+    testAccount = "offline-account-B||";
+    delayRequests = true;
+    delayedResolve = undefined;
+    await tab.send("Page.reload");
+    const accountDeadline = Date.now() + 10000;
+    while (!delayedResolve && Date.now() < accountDeadline) await sleep(30);
+    assert.ok(delayedResolve);
+    assert.equal(await evaluate('document.querySelectorAll("#ytsf-uploads article").length'), 0, "A different account must never inherit the previous account's cached films");
+    delayRequests = false;
+    delayedResolve();
+    await waitFor('document.querySelectorAll("#ytsf-uploads article").length === 3 && !document.querySelector("#ytsf-uploads button").disabled');
+    report("PASS account changes isolate persisted subscription lists and film caches");
+
+    currentIsolated = await isolatedContext();
+    testAccount = "offline-account-startup||";
+    await evaluate(`(async () => {
+      const key = await YTSubscriptionFilterCache.accountKey({DATASYNC_ID: ${JSON.stringify(testAccount)}});
+      await chrome.storage.local.set({['ytsf-cache-v1:'+key+':subscriptions']: {
+        schema:1, checkedAt:Date.now(), channels:[
+          {id:${JSON.stringify(A)},name:'A',aliases:['/@first']},
+          {id:${JSON.stringify(B)},name:'B',aliases:['/@second']}
+        ]
+      }});
+    })()`, currentIsolated);
+    await tab.send("Page.navigate", { url: "about:blank" });
+    const pages = (await browserCDP.send("Target.getTargets")).targetInfos.filter(target => target.type === "page");
+    assert.ok(pages.every(page => !page.url.startsWith("https://www.youtube.com")), "Preload must start without any YouTube tab");
+    const beforeStartup = calls.filter(value => value === "/feeds/videos.xml").length;
+    delayUploads = true;
+    await worker.send("Runtime.evaluate", { expression: 'globalThis.preloadDone=false; startup.run("startup-smoke", true).then(()=>{globalThis.preloadDone=true}); "started"', returnByValue: true });
+    const preloadDeadline = Date.now() + 10000;
+    while (pendingUploads.length < 2 && Date.now() < preloadDeadline) await sleep(30);
+    assert.equal(pendingUploads.length, 2, "The worker must fetch both channel lists with no YouTube page open");
+    await tab.send("Page.navigate", { url: "https://www.youtube.com/" });
+    await waitFor('document.getElementById("ytsf-status")?.textContent.includes("2 kanałów")');
+    await sleep(100);
+    assert.equal(calls.filter(value => value === "/feeds/videos.xml").length - beforeStartup, 2, "Opening YouTube must share the worker's in-flight startup requests");
+    delayUploads = false;
+    for (const resolve of pendingUploads.splice(0)) resolve();
+    await waitFor('document.querySelectorAll("#ytsf-uploads article").length === 3 && !document.querySelector("#ytsf-uploads button").disabled');
+    const finishDeadline = Date.now() + 10000;
+    while (Date.now() < finishDeadline) {
+      const done = await worker.send("Runtime.evaluate", { expression: "globalThis.preloadDone", returnByValue: true });
+      if (done.result.value) break;
+      await sleep(30);
+    }
+    const preload = await worker.send("Runtime.evaluate", { expression: `(async()=>({
+      done:globalThis.preloadDone,
+      alarm:Boolean(await chrome.alarms.get('ytsf-startup-refresh')),
+      state:(await chrome.storage.local.get('ytsf-startup-refresh-v1'))['ytsf-startup-refresh-v1']
+    }))()`, returnByValue: true, awaitPromise: true });
+    assert.equal(preload.result.value.done, true);
+    assert.equal(preload.result.value.alarm, false);
+    assert.equal(preload.result.value.state.queue.length, 0);
+    const afterPreload = dataRequests();
+    await tab.send("Page.reload");
+    await waitFor('document.querySelectorAll("#ytsf-uploads article").length === 3 && !document.querySelector("#ytsf-uploads button").disabled');
+    assert.equal(dataRequests(), afterPreload);
+    report("PASS worker preloads films with no YouTube tab, shares requests with an opening tab, and serves the next visit without fetching");
     assert.ok(calls.includes("/feed/channels") && calls.includes("/youtubei/v1/browse"));
     assert.deepEqual(exceptions, [], "No unhandled page or content-script exceptions");
     report("All browser smoke checks passed (offline fixtures, fresh Brave profile).");
   } finally {
     if (tab) tab.close();
+    if (worker) worker.close();
     await browserCDP.send("Browser.close").catch(() => {});
     browserCDP.close();
   }

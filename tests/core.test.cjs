@@ -164,7 +164,8 @@ test("manifest is restricted to desktop YouTube and contains all packaged refere
   const folder = path.join(__dirname, "..", "extension");
   const manifest = JSON.parse(fs.readFileSync(path.join(folder, "manifest.json"), "utf8"));
   assert.equal(manifest.manifest_version, 3);
-  assert.deepEqual(manifest.permissions, ["storage"]);
+  assert.deepEqual(manifest.permissions, ["storage", "alarms"]);
+  assert.ok(fs.existsSync(path.join(folder, manifest.background.service_worker)));
   assert.equal(manifest.host_permissions.length, 2);
   for (const script of manifest.content_scripts) for (const filename of [...script.js, ...script.css]) assert.ok(fs.existsSync(path.join(folder, filename)));
   assert.ok(fs.existsSync(path.join(folder, manifest.action.default_popup)));

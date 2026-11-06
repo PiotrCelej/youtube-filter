@@ -110,7 +110,7 @@
     return { ...video, published, channelId: channel.id, channelName: player.videoDetails?.author || channel.name || channel.id };
   }
 
-  async function fetchChannelVideos(channel, { signal, fetcher = fetch, cookie = document.cookie, origin = location.origin, now = new Date() } = {}) {
+  async function fetchChannelVideos(channel, { signal, fetcher = fetch, cookie = document.cookie, origin = location.origin, now = new Date(), knownVideos = [] } = {}) {
     if (!/^UC[\w-]{22}$/.test(channel.id) || !["https://www.youtube.com", "https://youtube.com"].includes(origin)) throw new Error("Nieprawidłowy kanał YouTube.");
     const settings = { signal, fetcher, cookie, origin };
     async function text(path) {
@@ -130,7 +130,7 @@
       if (signal?.aborted) throw cause;
       // RSS may be unavailable. The channel's complete upload playlist is the fallback.
     }
-    const known = new Map((feed || []).map(video => [video.id, video]));
+    const known = new Map([...knownVideos.filter(video => video.channelId === channel.id), ...(feed || [])].map(video => [video.id, video]));
     const html = await text(`/playlist?list=UU${channel.id.slice(2)}&hl=en`);
     const { initial, config } = core.parsePage(html);
     let batch = playlistPage(initial);
@@ -161,10 +161,14 @@
     return selectVideos([...collected.values(), ...(feed || [])], now);
   }
 
-  async function collectVideos(channels, { signal, onProgress = () => {}, concurrency = 4, ...settings } = {}) {
+  async function collectVideos(channels, { signal, onProgress = () => {}, concurrency = 4, loadChannel = fetchChannelVideos, seedVideos = [], ...settings } = {}) {
     let next = 0;
     let completed = 0;
     const results = new Map();
+    for (const video of seedVideos) {
+      if (!results.has(video.channelId)) results.set(video.channelId, []);
+      results.get(video.channelId).push(video);
+    }
     const errors = [];
     async function worker() {
       while (next < channels.length) {
@@ -176,7 +180,7 @@
         signal?.addEventListener("abort", abort, { once: true });
         const timeout = setTimeout(abort, 90000);
         try {
-          const videos = await fetchChannelVideos(channel, { ...settings, signal: controller.signal });
+          const videos = await loadChannel(channel, { ...settings, signal: controller.signal });
           signal?.throwIfAborted();
           results.set(channel.id, videos);
         } catch (cause) {

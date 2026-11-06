@@ -39,6 +39,10 @@
     const match = initialPattern.exec(html);
     if (!match) throw new Error("Nie można odczytać listy kanałów. Zaloguj się na YouTube i spróbuj ponownie.");
     const initial = jsonAt(html, initialPattern.lastIndex);
+    return { initial, config: readConfig(html) };
+  }
+
+  function readConfig(html) {
     const config = {};
     const configPattern = /ytcfg\.set\s*\(\s*(?=\{)/g;
     while (configPattern.exec(html)) {
@@ -53,7 +57,7 @@
       }
       Object.assign(config, block);
     }
-    return { initial, config };
+    return config;
   }
 
   function channelKey(value) {
@@ -137,7 +141,7 @@
     });
   }
 
-  const api = { walk, jsonAt, parsePage, channelKey, feedRoots, readChannels, makeIndex, isSubscribed };
+  const api = { walk, jsonAt, parsePage, readConfig, channelKey, feedRoots, readChannels, makeIndex, isSubscribed };
   root.YTSubscriptionFilterCore = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(globalThis);

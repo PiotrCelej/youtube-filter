@@ -2,7 +2,28 @@
   "use strict";
   const core = globalThis.YTSubscriptionFilterCore;
   const { fetchSubscriptions } = globalThis.YTSubscriptionFilterSubscriptions;
-  const { collectVideos } = globalThis.YTSubscriptionFilterUploads;
+  const { createCache, accountKey } = globalThis.YTSubscriptionFilterCache;
+  function fetchVideosInBackground(channel, options) {
+    if (!options.account) return globalThis.YTSubscriptionFilterUploads.fetchChannelVideos(channel, options);
+    const requestId = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const abort = () => {
+        chrome.runtime.sendMessage({ type: "cancel-channel-load", requestId }).catch(() => {});
+        reject(new DOMException("Przerwano pobieranie filmów.", "AbortError"));
+      };
+      if (options.signal?.aborted) { abort(); return; }
+      options.signal?.addEventListener("abort", abort, { once: true });
+      chrome.runtime.sendMessage({ type: "load-channel-videos", requestId,
+        account: options.account, channel: { id: channel.id, name: channel.name }, force: options.force === true
+      }).then(result => {
+        if (result?.error) reject(new Error(result.error));
+        else if (Array.isArray(result?.videos)) resolve(result.videos);
+        else reject(new Error("Nieprawidłowa odpowiedź pobierania w tle."));
+      }, reject).finally(() => options.signal?.removeEventListener("abort", abort));
+    });
+  }
+  const cache = createCache({ storage: chrome.storage.local, locks: navigator.locks,
+    namespace: chrome.runtime.id, fetchChannels: fetchSubscriptions, fetchVideos: fetchVideosInBackground });
   const TTL = 5 * 60 * 1000;
   const CARD_SELECTOR = "ytd-rich-item-renderer, ytd-rich-section-renderer, ytd-video-renderer, ytd-grid-video-renderer, yt-lockup-view-model";
   const AD_SELECTOR = "ytd-ad-slot-renderer, ytd-display-ad-renderer, ytd-promoted-sparkles-web-renderer, ytd-in-feed-ad-layout-renderer";
@@ -26,43 +47,112 @@
   let uploadsController;
   let uploadsGeneration = 0;
   let uploadsView;
+  let account = null;
+  let blockedAccount = null;
+  let refreshingChannels = false;
+  let uploadsNextCheckAt = 0;
+  const accountConfig = {};
+  const scannedScripts = new WeakSet();
   let uploadsState = { phase: "idle", version: 0, videos: [], errors: [], completed: 0, total: 0 };
 
-  function cancelUploads() {
+  function cancelUploads(clear = true) {
     uploadsGeneration++;
     uploadsController?.abort();
     uploadsController = undefined;
-    uploadsState = { phase: "idle", version: uploadsState.version + 1, videos: [], errors: [], completed: 0, total: 0 };
-    uploadsView?.clear();
+    if (clear) {
+      uploadsState = { phase: "idle", version: uploadsState.version + 1, videos: [], errors: [], completed: 0, total: 0 };
+      uploadsView?.clear();
+      uploadsNextCheckAt = 0;
+    }
   }
 
-  async function loadUploads(force = false) {
-    if (!enabled || !isHome() || phase !== "ready" || !force && uploadsState.phase !== "idle") return;
-    cancelUploads();
+  function renderUploads() {
+    if (!enabled || !isHome()) return;
+    const browse = activeBrowse();
+    if (!browse) return;
+    if (!uploadsView) uploadsView = globalThis.YTSubscriptionFilterUploadsView(() => loadUploads(true));
+    uploadsView.render(uploadsState, browse);
+  }
+
+  async function loadUploads(force = false, savedView) {
+    if (!enabled || !isHome() || phase !== "ready" || !force && (uploadsController || uploadsState.phase !== "idle" && Date.now() < uploadsNextCheckAt)) return;
+    cancelUploads(false);
     const current = ++uploadsGeneration;
     const requestController = new AbortController();
     uploadsController = requestController;
-    uploadsState = { ...uploadsState, phase: "loading", total: subscribedChannels.length };
-    schedule();
     try {
-      const result = await collectVideos(subscribedChannels, {
+      const view = savedView || await cache.readView(account, subscribedChannels);
+      if (current !== uploadsGeneration || !enabled) return;
+      const cached = Boolean(view?.videos.length);
+      uploadsState = { phase: "loading", videos: view?.videos || [], errors: [], completed: 0,
+        total: subscribedChannels.length, version: uploadsState.version + 1, cached };
+      renderUploads();
+      const result = await cache.refreshVideos(account, subscribedChannels, {
         signal: requestController.signal,
+        force, view,
         onProgress(progress) {
           if (current !== uploadsGeneration || !enabled) return;
-          uploadsState = { ...progress, phase: "loading", version: uploadsState.version + 1 };
-          schedule();
+          uploadsState = { ...progress, cached, phase: "loading", version: uploadsState.version + 1 };
+          renderUploads();
         }
       });
       if (current !== uploadsGeneration || !enabled) return;
       uploadsState = { ...uploadsState, ...result, phase: "ready", version: uploadsState.version + 1 };
+      uploadsNextCheckAt = result.errors.length ? Date.now() + 60000
+        : !force && view && !view.pending.length ? view.nextCheckAt : Date.now() + 15 * 60 * 1000;
     } catch (cause) {
       if (current !== uploadsGeneration || !enabled) return;
       uploadsState = { ...uploadsState, phase: "ready", version: uploadsState.version + 1,
         errors: [...uploadsState.errors, { channelName: "Pobieranie filmów", message: cause.message }] };
     } finally {
       if (current === uploadsGeneration) uploadsController = undefined;
-      schedule();
+      renderUploads();
     }
+  }
+
+  async function resolveAccount(signal) {
+    async function scan() {
+      for (const script of document.querySelectorAll("script:not([src])")) {
+        if (scannedScripts.has(script) || !script.textContent) continue;
+        scannedScripts.add(script);
+        const source = script.textContent;
+        if (/ytcfg\.set/.test(source)) Object.assign(accountConfig, core.readConfig(source));
+      }
+      const key = await accountKey(accountConfig);
+      return key && key !== blockedAccount ? key : null;
+    }
+    const found = await scan();
+    if (found || document.readyState !== "loading" || accountConfig.LOGGED_IN === false || blockedAccount) return found;
+    // The bootstrap config arrives with the HTML stream, before the home cards.
+    return new Promise((resolve, reject) => {
+      let busy = false;
+      let done = false;
+      const finish = (value, cause) => {
+        if (done) return;
+        done = true;
+        observer.disconnect();
+        clearTimeout(timer);
+        document.removeEventListener("DOMContentLoaded", check);
+        signal.removeEventListener("abort", abort);
+        if (cause) reject(cause);
+        else resolve(value);
+      };
+      const abort = () => finish(null, signal.reason);
+      const check = async () => {
+        if (busy || done) return;
+        busy = true;
+        const key = await scan();
+        busy = false;
+        if (key || document.readyState !== "loading") finish(key);
+      };
+      const observer = new MutationObserver(check);
+      const timer = setTimeout(() => finish(null), 2000);
+      observer.observe(document, { childList: true, subtree: true });
+      document.addEventListener("DOMContentLoaded", check);
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+      else check();
+    });
   }
 
   const isHome = () => location.pathname === "/";
@@ -125,9 +215,12 @@
     else if (channelCount === 0) message = "Tylko subskrypcje · Brak subskrybowanych kanałów na tym koncie.";
     else if (visibleCount === 0) message = `Tylko subskrypcje · ${channelCount} kanałów. W załadowanych rekomendacjach nie ma pasujących filmów. Dodatkowe filmy z kanałów znajdziesz poniżej.`;
     else message = `Tylko subskrypcje · ${channelCount} kanałów · widoczne filmy: ${visibleCount} · ukryte kafelki: ${hiddenCount}`;
+    if (phase === "ready" && refreshingChannels) message += " · Aktualizacja kanałów w tle…";
+    if (phase === "ready" && error) message += ` · Nie udało się odświeżyć: ${error} Wyświetlany jest zapisany widok.`;
+    if (cache.warning) message += " · Pamięć lokalna jest niedostępna; po ponownym otwarciu dane mogą wymagać pobrania.";
     const text = status.querySelector("span");
     if (text.textContent !== message) text.textContent = message;
-    status.querySelector("button").disabled = phase === "loading";
+    status.querySelector("button").disabled = phase === "loading" || refreshingChannels;
   }
 
   function filter() {
@@ -159,8 +252,7 @@
       else hiddenCount++;
     }
     renderStatus(browse);
-    if (!uploadsView) uploadsView = globalThis.YTSubscriptionFilterUploadsView(() => loadUploads(true));
-    uploadsView.render(uploadsState, browse);
+    renderUploads();
   }
 
   function schedule() {
@@ -171,39 +263,67 @@
 
   async function load(force = false) {
     if (!settingsReady || !enabled || !isHome()) return;
-    if (!force && (phase === "loading" && controller || phase === "ready" && Date.now() - updatedAt < TTL)) {
+    if (!force && (controller || phase === "ready" && Date.now() - updatedAt < TTL)) {
       if (phase === "ready") loadUploads();
       schedule();
       return;
     }
     controller?.abort();
-    cancelUploads();
     const current = ++generation;
     controller = new AbortController();
     const requestController = controller;
     const timeout = setTimeout(() => requestController.abort(), 45000);
-    phase = "loading";
+    if (phase !== "ready") phase = "loading";
+    refreshingChannels = true;
     error = "";
-    index = new Set();
-    channelCount = 0;
-    subscribedChannels = [];
     schedule();
     try {
-      const channels = await fetchSubscriptions({ signal: requestController.signal });
+      const resolvedAccount = await resolveAccount(requestController.signal);
       if (current !== generation || !enabled) return;
+      if (resolvedAccount !== account) {
+        account = resolvedAccount;
+        subscribedChannels = [];
+        index = new Set();
+        channelCount = 0;
+        phase = "loading";
+        cancelUploads();
+      }
+      const saved = await cache.readView(account);
+      if (current !== generation || !enabled) return;
+      if (saved) {
+        index = core.makeIndex(saved.channels);
+        channelCount = saved.channels.length;
+        subscribedChannels = saved.channels;
+        updatedAt = saved.checkedAt;
+        phase = "ready";
+        if (uploadsState.phase === "idle") loadUploads(false, saved);
+        schedule();
+      }
+      const result = await cache.getChannels(account, { signal: requestController.signal, force });
+      if (current !== generation || !enabled) return;
+      const channels = result.channels;
+      const changed = JSON.stringify(subscribedChannels) !== JSON.stringify(channels);
       index = core.makeIndex(channels);
       channelCount = channels.length;
       subscribedChannels = channels;
-      updatedAt = Date.now();
+      updatedAt = result.checkedAt;
       phase = "ready";
-      loadUploads();
+      if (changed || force) {
+        cancelUploads(false);
+        uploadsState.phase = "idle";
+        const allowed = new Set(channels.map(channel => channel.id));
+        uploadsState.videos = uploadsState.videos.filter(video => allowed.has(video.channelId));
+        uploadsState.version++;
+        renderUploads();
+      }
+      loadUploads(force);
     } catch (cause) {
       if (current !== generation || !enabled) return;
-      phase = "error";
+      if (phase !== "ready") phase = "error";
       error = cause.name === "AbortError" ? "Upłynął czas pobierania kanałów. Spróbuj ponownie." : cause.message;
     } finally {
       clearTimeout(timeout);
-      if (current === generation) controller = undefined;
+      if (current === generation) { controller = undefined; refreshingChannels = false; }
       schedule();
     }
   }
@@ -218,6 +338,7 @@
       controller?.abort();
       controller = undefined;
       phase = "idle";
+      refreshingChannels = false;
       index = new Set();
       channelCount = 0;
       updatedAt = 0;
@@ -232,6 +353,15 @@
     if (area === "local" && changes.enabled) {
       settingsVersion++;
       applyEnabled(changes.enabled.newValue);
+    }
+    if (area === "local" && account && enabled && isHome() && phase === "ready" && !uploadsController
+      && Object.keys(changes).some(key => key.startsWith(`ytsf-cache-v1:${account}:videos:`))) {
+      const currentAccount = account;
+      cache.readView(account, subscribedChannels).then(view => {
+        if (!view || account !== currentAccount || !enabled || !isHome() || uploadsController) return;
+        uploadsState = { ...uploadsState, videos: view.videos, version: uploadsState.version + 1 };
+        renderUploads();
+      }).catch(() => {});
     }
   });
   const version = settingsVersion;
@@ -253,7 +383,10 @@
   });
 
   function navigation() {
-    if (!isHome() && uploadsState.phase !== "idle") cancelUploads();
+    if (!isHome() && uploadsController) {
+      cancelUploads(false);
+      uploadsState.phase = "idle";
+    }
     syncRoot();
     schedule();
     if (enabled && isHome()) load();
@@ -283,6 +416,9 @@
       controller?.abort();
       controller = undefined;
       phase = "loading";
+      refreshingChannels = false;
+      blockedAccount = account;
+      account = null;
       index = new Set();
       channelCount = 0;
       updatedAt = 0;

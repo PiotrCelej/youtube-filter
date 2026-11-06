@@ -93,7 +93,7 @@ html[dark] #ytsf-status {
 }
 #ytsf-uploads button:disabled { opacity: .55; cursor: default; }
 #ytsf-uploads .ytsf-uploads-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 28px 16px; }
-#ytsf-uploads article { min-width: 0; }
+#ytsf-uploads article { min-width: 0; content-visibility: auto; contain-intrinsic-size: auto 280px; }
 #ytsf-uploads a { text-decoration: none; color: inherit; }
 #ytsf-uploads a:hover h3 { text-decoration: underline; }
 #ytsf-uploads img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: cover; background: #dfe9e2; border-radius: 12px; }
