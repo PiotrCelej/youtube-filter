@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YouTube — tylko subskrypcje",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Filtruje rekomendacje YouTube i dodaje filmy z ostatniego miesiąca ze subskrybowanych kanałów. Z przełącznikiem.",
   "minimum_chrome_version": "111",
   "permissions": ["storage", "alarms"],

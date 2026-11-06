@@ -139,6 +139,7 @@ async function run() {
     let failUploadB = false;
     let delayUploads = false;
     let useModernPlaylists = false;
+    let redirectPlaylists = false;
     let testAccount = "offline-account-A||";
     const pendingUploads = [];
     const calls = [];
@@ -150,6 +151,7 @@ async function run() {
         let body;
         let contentType = "text/html; charset=utf-8";
         let responseCode = 200;
+        const responseHeaders = [];
         if (url.hostname === "i.ytimg.com") {
           contentType = "image/svg+xml";
           body = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#245c43"/><path d="M140 60v60l50-30z" fill="#e6f3ea"/></svg>';
@@ -163,7 +165,11 @@ async function run() {
         } else if (url.pathname === "/playlist") {
           const playlist = url.searchParams.get("list");
           const channelId = `UC${playlist.slice(2)}`;
-          if (failUploadB && channelId === B) { responseCode = 503; body = "unavailable"; }
+          if (redirectPlaylists) {
+            responseCode = 302; body = "";
+            responseHeaders.push({ name: "Location", value: "https://consent.youtube.com/m" });
+          }
+          else if (failUploadB && channelId === B) { responseCode = 503; body = "unavailable"; }
           else body = uploadFixtures.modernPlaylist(channelUploads[channelId] || []);
         } else if (url.pathname === "/feed/channels") {
           if (delayRequests) await new Promise(resolve => { delayedResolve = resolve; });
@@ -177,7 +183,7 @@ async function run() {
         } else if (url.pathname === "/" || url.pathname === "/watch") body = home.replace("offline-account-A||", testAccount);
         else { responseCode = 404; body = ""; }
         await client.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode,
-          responseHeaders: [{ name: "Content-Type", value: contentType }], body: Buffer.from(body).toString("base64") });
+          responseHeaders: [{ name: "Content-Type", value: contentType }, ...responseHeaders], body: Buffer.from(body).toString("base64") });
       } catch (cause) {
         if (!/closed|Invalid InterceptionId|Fetch domain is not enabled/i.test(cause.message)) exceptions.push({ text: cause.message });
       }
@@ -262,10 +268,21 @@ async function run() {
     useModernPlaylists = true;
     await evaluate('document.querySelector("#ytsf-uploads button").click()');
     await waitFor('document.querySelectorAll("#ytsf-uploads article").length === 3 && !document.querySelector("#ytsf-uploads button").disabled');
-    assert.equal(await evaluate('document.querySelector("#ytsf-uploads details").hidden'), true);
+    assert.equal(await evaluate('document.querySelector("#ytsf-uploads details").hidden'), true,
+      await evaluate('document.querySelector("#ytsf-uploads details").textContent'));
     assert.equal(await evaluate('document.querySelectorAll("#ytsf-uploads .ytsf-upload-fallback").length'), 1);
     useModernPlaylists = false;
     report("PASS unavailable RSS recovers via current lockupViewModel playlists and exact publication metadata");
+
+    redirectPlaylists = true;
+    const redirected = await worker.send("Runtime.evaluate", {
+      expression: `youtubeFetch('https://www.youtube.com/playlist?list=UU${A.slice(2)}').then(() => '', cause => cause.message)`,
+      awaitPromise: true, returnByValue: true
+    });
+    assert.match(redirected.result.value, /Otwórz YouTube.*zgód.*odśwież filmy/);
+    assert.equal(calls.includes("/m"), false, "The worker must stop before fetching consent.youtube.com");
+    redirectPlaylists = false;
+    report("PASS missing consent reports an actionable error without following the cross-origin redirect");
 
     failUploadB = true;
     await evaluate('document.querySelector("#ytsf-uploads button").click()');

@@ -6,7 +6,10 @@ const { fetchChannelVideos } = globalThis.YTSubscriptionFilterUploads;
 const { createStartupRefresher, ALARM } = globalThis.YTSubscriptionFilterStartup;
 const requests = new Map();
 
-async function publicFetch(url, options = {}) {
+async function youtubeFetch(url, options = {}) {
+  if (!["https://www.youtube.com", "https://youtube.com"].includes(new URL(url).origin)) {
+    throw new Error("Nieprawidłowy adres YouTube.");
+  }
   // Checking the preference on every request also bounds idle time during long
   // playlists. A stalled response is aborted before the worker's 30 s limit.
   if ((await chrome.storage.local.get({ enabled: true })).enabled === false) throw new DOMException("Wyłączono filtr.", "AbortError");
@@ -16,7 +19,13 @@ async function publicFetch(url, options = {}) {
   const timeout = setTimeout(abort, 20000);
   if (options.signal?.aborted) abort();
   try {
-    const response = await fetch(url, { ...options, credentials: "omit", signal: controller.signal });
+    // Reuse the browser's consent/session cookies. Anonymous HTML requests can
+    // redirect to consent.youtube.com even while the user is signed in on YouTube.
+    // Stop redirects before fetching an origin outside our host permissions.
+    const response = await fetch(url, { ...options, credentials: "include", redirect: "manual", signal: controller.signal });
+    if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+      throw new Error("YouTube przekierował pobieranie danych. Otwórz YouTube, sprawdź logowanie i ustawienia zgód, a potem odśwież filmy.");
+    }
     // Consume the body under the same timeout and cancellation signal.
     const body = await response.text();
     return { ok: response.ok, status: response.status, url: response.url,
@@ -29,7 +38,7 @@ async function publicFetch(url, options = {}) {
 
 const cache = createCache({ storage: chrome.storage.local, locks: navigator.locks, namespace: chrome.runtime.id,
   fetchVideos: (channel, settings) => fetchChannelVideos(channel, { ...settings,
-    fetcher: publicFetch, cookie: "", origin: "https://www.youtube.com" }) });
+    fetcher: youtubeFetch, cookie: "", origin: "https://www.youtube.com" }) });
 const startup = createStartupRefresher({ storage: chrome.storage.local, alarms: chrome.alarms, cache });
 const reportError = cause => console.warn("YouTube subscription refresh:", cause.message);
 

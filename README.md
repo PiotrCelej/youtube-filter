@@ -13,7 +13,7 @@ najnowszy film, jeśli kanał nie publikował niczego w tym okresie.
 
 ## Instalacja
 
-1. Pobierz i rozpakuj `dist/youtube-subscriptions-filter-1.3.0.zip` albo użyj
+1. Pobierz i rozpakuj `dist/youtube-subscriptions-filter-1.3.1.zip` albo użyj
    bezpośrednio katalogu `extension` z tego projektu.
 2. W Brave otwórz `brave://extensions`.
 3. Włącz **Tryb programisty**.
@@ -26,6 +26,11 @@ najnowszy film, jeśli kanał nie publikował niczego w tym okresie.
 Aktualizacja z poprzedniej wersji: zastąp pliki w dotychczasowym katalogu
 rozszerzenia, kliknij jego przycisk przeładowania w `brave://extensions`, a potem
 odśwież kartę YouTube.
+
+Wersja 1.3.1 naprawia pobieranie playlist przekierowywanych do `consent.youtube.com`.
+Proces tła korzysta z ciasteczek YouTube zapisanych w przeglądarce, w tym decyzji
+o zgodach. Jeśli YouTube nadal przekierowuje żądanie, rozszerzenie pokazuje
+komunikat z prośbą o sprawdzenie logowania i zgód oraz ponowne odświeżenie filmów.
 
 Wersja 1.3.0 uruchamia odświeżanie filmów przy starcie profilu Brave, zanim
 otworzysz YouTube. Korzysta z zapisanych subskrypcji i uzupełnia lokalny cache
@@ -85,7 +90,8 @@ i [dokumentację skryptów treści Chromium](https://developer.chrome.com/docs/e
 - Wyłączenie filtra zatrzymuje także zadanie startowe. Pierwsze użycie rozszerzenia
   nadal wymaga otwarcia YouTube, aby odczytać subskrypcje zalogowanego konta.
   Ich późniejsze zmiany są weryfikowane po otwarciu YouTube; preładowanie korzysta
-  z ostatniej zapisanej listy. W tle pobierane są publiczne dane, bez ciasteczek sesji.
+  z ostatniej zapisanej listy. W tle pobierane są dane z użyciem ciasteczek YouTube
+  zapisanych w przeglądarce.
 - Cache jest oddzielony według konta YouTube i profilu marki, z użyciem skrótu
   stabilnego identyfikatora. Jeżeli bieżącego konta nie da się jednoznacznie
   rozpoznać, rozszerzenie pobiera dane zwykłą drogą i nie odtwarza cache konta.
@@ -154,8 +160,10 @@ Po zmianie konta odśwież kartę YouTube, aby jednoznacznie odczytać nowe subs
   Rozszerzenie korzysta z istniejącej sesji;
   dla stronicowania oblicza podpis żądania z dostępnych ciasteczek sesyjnych
   YouTube. Nie zapisuje ani nie loguje ciasteczek i podpisów.
-  Proces tła pobiera publiczne RSS, playlisty i metadane bez ciasteczek; nie
-  otrzymuje z kart danych logowania.
+  Proces tła pobiera RSS, playlisty i metadane z ciasteczkami YouTube dołączanymi
+  przez przeglądarkę, aby uwzględnić sesję i zapisaną decyzję o zgodach. Nie odczytuje
+  ich wartości ani nie otrzymuje z kart danych logowania. Nie podąża za
+  przekierowaniami, w tym do strony zgód.
 - Brak analityki, serwera pośredniczącego i zdalnie pobieranego kodu.
 
 ## Rozwój i weryfikacja
@@ -211,6 +219,11 @@ ograniczone ponawianie błędów i wyłączenie podczas pobierania. Test w Brave
 uruchamia proces tła bez karty YouTube i sprawdza współdzielenie żądań z kartą
 otwartą później.
 
+Testy procesu tła sprawdzają użycie sesji przeglądarki przy pobieraniu playlist
+i kolejnych stron oraz zatrzymanie przekierowań do strony zgód. Test w Brave
+potwierdza, że takie przekierowanie daje czytelny komunikat bez żądania do
+`consent.youtube.com`.
+
 Automatyczna weryfikacja nie zastępuje sprawdzenia na zalogowanym koncie z
 aktualnym układem YouTube. Przed publikacją należy wykonać taki test na Windows
 i Linux, w tym dla konta z dużą liczbą subskrypcji i po przełączeniu konta.
@@ -230,5 +243,6 @@ i Linux, w tym dla konta z dużą liczbą subskrypcji i po przełączeniu konta.
 - `tests/uploads.test.cjs` — testy dat, wyboru filmów i pobierania publikacji.
 - `tests/cache.test.cjs` — testy cache, terminów odświeżania, izolacji i równoległych kart.
 - `tests/startup.test.cjs` — testy pobierania przy starcie i wznowienia zadania.
+- `tests/background.test.cjs` — testy sesji, przekierowań i anulowania pobierania w tle.
 - `scripts/browser-smoke.cjs` — test w rzeczywistym Brave na kontrolowanych danych.
 - `scripts/package.cjs` — tworzenie ZIP-a bez dodatkowych bibliotek.
